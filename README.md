@@ -8,7 +8,7 @@ Prerequisites:
 
 Clone and create environment:
 ```bash
-git clone <your-repo-url> karaoke
+git clone https://github.com/dage/karaoke karaoke
 cd karaoke
 conda create -y -n karaoke-yt -c conda-forge python=3.11 yt-dlp ffmpeg
 conda activate karaoke-yt
