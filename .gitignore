@@ -1,0 +1,23 @@
+# /Users/dag/projects/karaoke/.gitignore
+
+# Env
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+
+# Conda env dirs (if any local)
+/env/
+
+# Audio outputs
+/audio/
+
+# Generated subtitle outputs
+/youtube_autosubs.*
+
+# OS
+.DS_Store
