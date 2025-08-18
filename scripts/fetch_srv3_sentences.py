@@ -14,6 +14,8 @@ import yt_dlp
 DEFAULT_URL = "https://www.youtube.com/watch?v=1gfdp6V1Epc"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT_BASENAME = "youtube_autosubs"
+OUTPUT_DIR = PROJECT_ROOT / "output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def download_srv3_subtitles(url: str, out_base: str) -> Path:
@@ -99,8 +101,8 @@ def main() -> None:
 
         sentences = parse_srv3_sentences(srv3_path)
 
-    # Write outputs to project root
-    out_txt = PROJECT_ROOT / "youtube_autosubs.sentences.txt"
+    # Write outputs to output directory
+    out_txt = OUTPUT_DIR / "youtube_autosubs.sentences.txt"
     write_sentences_seconds(sentences, out_txt)
 
     print(f"Wrote {len(sentences)} sentences to {out_txt}")

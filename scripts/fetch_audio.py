@@ -9,7 +9,7 @@ import yt_dlp
 
 DEFAULT_URL = "https://www.youtube.com/watch?v=1gfdp6V1Epc"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-OUTPUT_DIR = PROJECT_ROOT / "audio"
+OUTPUT_DIR = PROJECT_ROOT / "output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
