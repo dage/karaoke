@@ -58,7 +58,7 @@ All generated files are initially stored in the `output` directory. They may be 
   ```bash
   python tools/upload_to_s3.py
   ```
-  Uploads everything under `output` to a unique `karaoke_XXXXX` folder in the specified S3 bucket and writes a temporary `manifest.json` with absolute S3 URLs for all files. Prints the manifest URL to easily have a single URL to reference the whole dataset to be shared with online AI agents or vibe coding platforms. Tests the S3 config by using curl to attempt to retrieve the files.
+  Uploads everything under `output` to a unique `karaoke_XXXXX` folder in the specified S3 bucket and writes a temporary `manifest.json` with absolute S3 URLs for all files. Prints the manifest URL to easily have a single URL to reference the whole dataset to be shared with online AI agents or vibe coding platforms. Tests the S3 config by using curl to attempt to retrieve the files. Also validates that uploaded assets have correct Content-Type headers, CORS support, and Range request support for browser compatibility.
 
 ## License
 MIT — see LICENSE

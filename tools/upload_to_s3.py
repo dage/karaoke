@@ -188,6 +188,99 @@ def _curl_verify(url: str) -> None:
         pass
 
 
+def _curl_headers(
+    url: str,
+    *,
+    extra_headers: dict[str, str] | None = None,
+    method: str = "HEAD",
+) -> tuple[int, dict[str, str]]:
+    """Return (status_code, headers) using curl for reliability and parity with CLI checks.
+
+    Follows redirects and returns the final response headers. Header keys are lower-cased.
+    """
+    if not shutil.which("curl"):
+        return (0, {})
+    cmd: list[str] = ["curl", "-sS", "-D", "-", "-o", "/dev/null", "-L"]
+    if method.upper() == "HEAD":
+        cmd.append("-I")
+    if extra_headers:
+        for k, v in extra_headers.items():
+            cmd.extend(["-H", f"{k}: {v}"])
+    cmd.append(url)
+    completed = subprocess.run(cmd, capture_output=True, text=True)
+    raw = completed.stdout
+    status_code = 0
+    headers: dict[str, str] = {}
+    # Parse the last header block (after redirects)
+    for line in raw.splitlines():
+        line = line.strip("\r\n")
+        if not line:
+            continue
+        if line.startswith("HTTP/"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                status_code = int(parts[1])
+            headers = {}
+            continue
+        if ":" in line:
+            k, v = line.split(":", 1)
+            headers[k.strip().lower()] = v.strip()
+    return status_code, headers
+
+
+def _normalize_content_type(value: str) -> str:
+    return (value or "").split(";")[0].strip().lower()
+
+
+def _check_s3_asset(
+    url: str,
+    *,
+    expected_types: list[str],
+    origin: str = "https://example.dev",
+) -> list[str]:
+    """Run a set of header-level validations against an S3-hosted asset.
+
+    - Verifies Content-Type via HEAD
+    - Verifies CORS (Access-Control-Allow-Origin) presence for HEAD with Origin
+    - Verifies Range support (206 + Content-Range for Range: bytes=0-1)
+    Returns a list of human-readable issue strings.
+    """
+    issues: list[str] = []
+
+    # Basic HEAD
+    status, headers = _curl_headers(url, method="HEAD")
+    if status == 0 and not headers:
+        issues.append("curl not found; cannot perform header checks")
+        return issues
+    ct = _normalize_content_type(headers.get("content-type", ""))
+    if ct not in [et.lower() for et in expected_types]:
+        issues.append(
+            f"Wrong Content-Type '{headers.get('content-type', '')}' for {url} (expected one of: {', '.join(expected_types)})"
+        )
+
+    # CORS on HEAD with Origin
+    status_o, headers_o = _curl_headers(url, extra_headers={"Origin": origin}, method="HEAD")
+    allow_origin = headers_o.get("access-control-allow-origin")
+    if allow_origin not in ("*", origin):
+        issues.append(
+            f"Missing or invalid Access-Control-Allow-Origin for {url} on HEAD with Origin (got: {allow_origin!r})"
+        )
+
+    # Range request (HEAD with Range works on S3; expect 206 + Content-Range)
+    status_r, headers_r = _curl_headers(
+        url,
+        extra_headers={"Origin": origin, "Range": "bytes=0-1"},
+        method="HEAD",
+    )
+    content_range = headers_r.get("content-range", "")
+    if status_r != 206 or not content_range.startswith("bytes 0-1/"):
+        issues.append(
+            f"Range check failed for {url}: expected 206 with Content-Range 'bytes 0-1/...', got {status_r} and '{content_range}'"
+        )
+
+    return issues
+
+
 def main() -> int:
     try:
         _load_env()
@@ -237,7 +330,15 @@ def main() -> int:
             # Status to stderr so stdout remains clean for the final manifest URL
             sys.stderr.write(f"Uploading {path} -> s3://{bucket}/{key}\n")
             sys.stderr.flush()
-            _upload_with_progress(s3, path, bucket, key)
+            
+            # Set appropriate ContentType based on file extension
+            extra_args = {}
+            if path.suffix.lower() == ".mp3":
+                extra_args["ContentType"] = "audio/mpeg"
+            elif path.suffix.lower() in {".txt", ".tsv"}:
+                extra_args["ContentType"] = "text/plain"
+            
+            _upload_with_progress(s3, path, bucket, key, extra_args=extra_args)
 
         # Upload rewritten manifest
         manifest_key = f"{folder}/manifest.json"
@@ -256,6 +357,46 @@ def main() -> int:
         manifest_url = f"{base_http}/{manifest_key}"
         print(f"\nManifest URL: {manifest_url}")
         _curl_verify(manifest_url)
+        # Additional validation: check audio and text assets directly on S3 using curl header analysis
+        problems: list[str] = []
+        # From the rewritten manifest, pull absolute URLs
+        audio_url = rewritten.get("audio_file")
+        words_url = rewritten.get("words")
+        sentences_url = rewritten.get("sentences")
+
+        if isinstance(audio_url, str) and audio_url:
+            problems += _check_s3_asset(
+                audio_url,
+                expected_types=[
+                    "audio/mpeg",  # standard mp3 type
+                    "audio/mp3",    # sometimes used
+                ],
+            )
+
+        if isinstance(words_url, str) and words_url:
+            problems += _check_s3_asset(
+                words_url,
+                expected_types=[
+                    "text/plain",  # expected for .txt
+                ],
+            )
+
+        if isinstance(sentences_url, str) and sentences_url:
+            problems += _check_s3_asset(
+                sentences_url,
+                expected_types=[
+                    "text/plain",
+                ],
+            )
+
+        if problems:
+            print("Validation issues detected:")
+            for p in problems:
+                print(f"❌ {p}")
+            # Non-zero exit to surface problems in CI/manual runs
+            return 20
+        else:
+            print("✅ All asset header checks passed (Content-Type, CORS, Range).")
         return 0
 
     except (NoCredentialsError, ClientError) as e:
