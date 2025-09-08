@@ -53,15 +53,17 @@ This repository extracts audio and Thai auto captions from YouTube into aligned 
 - Don’t rename or move public entry points or output filenames without explicit direction.
 
 ## Commit & Pull Request Guidelines
-- Format: `type: imperative summary ≤50 chars` (no scope in parentheses).
+- Format: type: imperative summary ≤50 chars (no scope in parentheses).
 - Commit message body is PLAIN TEXT (not Markdown). Start at line 3 (line 2 blank) and write each bullet as a literal line beginning with `- ` at column 1. Example: `- add X`
 - Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
-- Example: `fix: prevent single model failures from crashing parallel execution`
+- Example: fix: prevent single model failures from crashing parallel execution
 - PRs: concise description, linked issue, UI screenshots when relevant, and validation steps (commands + expected outputs).
 - Keep messages short and focused; for small changes, a single‑line commit without a body is fine.
+
+Note on sharing commit messages in chat:
+- When suggesting a commit message via chat, wrap the entire message in a fenced code block so copy/paste preserves the leading `- ` characters for bullets.
 
 ## When in Doubt
 - Ask before broad refactors.
 - Preserve Thai‑only behavior and output compatibility.
 - Keep README and .env template consistent with the current flow.
-
