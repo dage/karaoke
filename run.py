@@ -35,11 +35,8 @@ def main() -> None:
     print("Downloading audio (MP3)...")
     run([sys.executable, str(PROJECT_ROOT / "scripts" / "fetch_audio.py"), url])
 
-    print("Fetching srv3 and generating words...")
-    run([sys.executable, str(PROJECT_ROOT / "scripts" / "fetch_srv3_words.py"), url])
-
-    print("Generating sentences...")
-    run([sys.executable, str(PROJECT_ROOT / "scripts" / "fetch_srv3_sentences.py"), url])
+    print("Fetching lyrics (words + sentences)...")
+    run([sys.executable, str(PROJECT_ROOT / "scripts" / "fetch_lyrics.py"), url])
 
     print("All outputs generated.")
 
@@ -58,5 +55,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
