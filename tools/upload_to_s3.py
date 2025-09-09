@@ -281,85 +281,107 @@ def _check_s3_asset(
     return issues
 
 
+def upload_output_and_get_manifest() -> tuple[str, dict]:
+    """Upload files under output/ to S3 and return (manifest_url, rewritten_manifest).
+
+    This function performs the same upload work as the CLI, but returns values
+    for programmatic use. Caller is responsible for any post-upload validation.
+    Raises on errors.
+    """
+    _load_env()
+
+    if not OUTPUT_DIR.exists() or not OUTPUT_DIR.is_dir():
+        raise RuntimeError(f"output directory not found at {OUTPUT_DIR}")
+
+    env_vals = _validate_aws_env()
+    bucket = env_vals["S3_BUCKET_NAME"]
+    region = env_vals["AWS_REGION"]
+    s3 = _build_s3_client(
+        env_vals["AWS_ACCESS_KEY_ID"],
+        env_vals["AWS_SECRET_ACCESS_KEY"],
+        env_vals["AWS_REGION"],
+    )
+
+    folder = _generate_folder_name("karaoke_")
+    _ensure_prefix_exists(s3, bucket, folder)
+
+    base_http = _s3_base_url(bucket, region)
+
+    # Collect files under output/
+    local_files: list[Path] = [p for p in OUTPUT_DIR.iterdir() if p.is_file()]
+
+    # Load local manifest.json so we can rewrite a temp copy with absolute URLs
+    local_manifest_path = OUTPUT_DIR / "manifest.json"
+    if not local_manifest_path.exists():
+        raise RuntimeError(f"manifest not found at {local_manifest_path}")
+    with local_manifest_path.open("r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    rewritten = _rewrite_manifest_with_absolute_urls(manifest, base_http, folder)
+
+    # Create temp file for manifest
+    temp_manifest_path = Path(tempfile.gettempdir()) / f"manifest_{folder}.json"
+    with temp_manifest_path.open("w", encoding="utf-8") as f:
+        json.dump(rewritten, f, ensure_ascii=False, indent=2)
+
+    # Upload all files first, excluding manifest.json; we'll upload temp manifest last
+    for path in local_files:
+        if path.name == "manifest.json":
+            continue
+        key = f"{folder}/{path.name}"
+        # Status to stderr so stdout remains clean for the final manifest URL
+        sys.stderr.write(f"Uploading {path} -> s3://{bucket}/{key}\n")
+        sys.stderr.flush()
+
+        # Set appropriate ContentType based on file extension
+        extra_args = {}
+        if path.suffix.lower() == ".mp3":
+            extra_args["ContentType"] = "audio/mpeg"
+        elif path.suffix.lower() in {".txt", ".tsv"}:
+            extra_args["ContentType"] = "text/plain"
+
+        _upload_with_progress(s3, path, bucket, key, extra_args=extra_args)
+
+    # Upload rewritten manifest
+    manifest_key = f"{folder}/manifest.json"
+    sys.stderr.write(f"Uploading manifest -> s3://{bucket}/{manifest_key}\n")
+    sys.stderr.flush()
+    _upload_with_progress(
+        s3,
+        temp_manifest_path,
+        bucket,
+        manifest_key,
+        extra_args={"ContentType": "application/json"},
+    )
+
+    # Remove temp manifest
+    try:
+        temp_manifest_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    manifest_url = f"{base_http}/{manifest_key}"
+    return manifest_url, rewritten
+
+
 def main() -> int:
     try:
-        _load_env()
-
+        # Early checks to preserve historical exit codes
         if not OUTPUT_DIR.exists() or not OUTPUT_DIR.is_dir():
             print(f"Error: output directory not found at {OUTPUT_DIR}")
             return 2
-
-        # Required env vars (validate all and give helpful hints if commented out)
-        env_vals = _validate_aws_env()
-        bucket = env_vals["S3_BUCKET_NAME"]
-        region = env_vals["AWS_REGION"]
-        s3 = _build_s3_client(
-            env_vals["AWS_ACCESS_KEY_ID"],
-            env_vals["AWS_SECRET_ACCESS_KEY"],
-            env_vals["AWS_REGION"],
-        )
-
-        folder = _generate_folder_name("karaoke_")
-        _ensure_prefix_exists(s3, bucket, folder)
-
-        base_http = _s3_base_url(bucket, region)
-
-        # Collect files under output/
-        local_files: list[Path] = [p for p in OUTPUT_DIR.iterdir() if p.is_file()]
-
-        # Load local manifest.json so we can rewrite a temp copy with absolute URLs
         local_manifest_path = OUTPUT_DIR / "manifest.json"
         if not local_manifest_path.exists():
             print(f"Error: manifest not found at {local_manifest_path}")
             return 3
-        with local_manifest_path.open("r", encoding="utf-8") as f:
-            manifest = json.load(f)
 
-        rewritten = _rewrite_manifest_with_absolute_urls(manifest, base_http, folder)
+        manifest_url, rewritten = upload_output_and_get_manifest()
 
-        # Create temp file for manifest
-        temp_manifest_path = Path(tempfile.gettempdir()) / f"manifest_{folder}.json"
-        with temp_manifest_path.open("w", encoding="utf-8") as f:
-            json.dump(rewritten, f, ensure_ascii=False, indent=2)
-
-        # Upload all files first, excluding manifest.json; we'll upload temp manifest last
-        for path in local_files:
-            if path.name == "manifest.json":
-                continue
-            key = f"{folder}/{path.name}"
-            # Status to stderr so stdout remains clean for the final manifest URL
-            sys.stderr.write(f"Uploading {path} -> s3://{bucket}/{key}\n")
-            sys.stderr.flush()
-            
-            # Set appropriate ContentType based on file extension
-            extra_args = {}
-            if path.suffix.lower() == ".mp3":
-                extra_args["ContentType"] = "audio/mpeg"
-            elif path.suffix.lower() in {".txt", ".tsv"}:
-                extra_args["ContentType"] = "text/plain"
-            
-            _upload_with_progress(s3, path, bucket, key, extra_args=extra_args)
-
-        # Upload rewritten manifest
-        manifest_key = f"{folder}/manifest.json"
-        sys.stderr.write(f"Uploading manifest -> s3://{bucket}/{manifest_key}\n")
-        sys.stderr.flush()
-        _upload_with_progress(s3, temp_manifest_path, bucket, manifest_key, extra_args={"ContentType": "application/json"})
-        # Set content-type explicitly for manifest
-        # ContentType set above via ExtraArgs
-
-        # Remove temp manifest
-        try:
-            temp_manifest_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-        manifest_url = f"{base_http}/{manifest_key}"
         print(f"\nManifest URL: {manifest_url}")
         _curl_verify(manifest_url)
+
         # Additional validation: check audio and text assets directly on S3 using curl header analysis
         problems: list[str] = []
-        # From the rewritten manifest, pull absolute URLs
         audio_url = rewritten.get("audio_file")
         words_url = rewritten.get("words")
         sentences_url = rewritten.get("sentences")
@@ -368,8 +390,8 @@ def main() -> int:
             problems += _check_s3_asset(
                 audio_url,
                 expected_types=[
-                    "audio/mpeg",  # standard mp3 type
-                    "audio/mp3",    # sometimes used
+                    "audio/mpeg",
+                    "audio/mp3",
                 ],
             )
 
@@ -377,7 +399,7 @@ def main() -> int:
             problems += _check_s3_asset(
                 words_url,
                 expected_types=[
-                    "text/plain",  # expected for .txt
+                    "text/plain",
                 ],
             )
 
@@ -393,7 +415,6 @@ def main() -> int:
             print("Validation issues detected:")
             for p in problems:
                 print(f"❌ {p}")
-            # Non-zero exit to surface problems in CI/manual runs
             return 20
         else:
             print("✅ All asset header checks passed (Content-Type, CORS, Range).")
